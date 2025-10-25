@@ -57,6 +57,9 @@ class CompetitionAlignedLoss(nn.Module):
         Returns:
             loss: Scalar loss value
         """
+        # Ensure targets are float
+        targets = targets.float()
+        
         # Get probabilities
         probs = torch.sigmoid(logits)
         
@@ -131,6 +134,9 @@ class CompetitionFocalLoss(nn.Module):
         Returns:
             loss: Scalar loss value
         """
+        # Ensure targets are float
+        targets = targets.float()
+        
         # Get probabilities
         probs = torch.sigmoid(logits)
         

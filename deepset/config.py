@@ -246,6 +246,64 @@ def get_config(preset: str = "default") -> Config:
         config.experiment_name = "deepset_optimized"
         return config
     
+    elif preset == "competition":
+        # Use competition-aligned loss function
+        config = Config()
+        # Model: Same as optimized
+        config.model.embedding_dim = 192
+        config.model.hidden_dim = 384
+        config.model.dropout = 0.15
+        # Training: Longer training
+        config.training.num_epochs = 50
+        config.training.batch_size = 32
+        config.training.learning_rate = 8e-5
+        config.training.early_stopping_patience = 15
+        # Loss: Use competition-aligned loss (weights FN 2x more than FP)
+        config.loss.use_focal_loss = False  # Disable standard focal loss
+        config.loss.focal_alpha = 0.65
+        config.loss.focal_gamma = 2.5
+        config.experiment_name = "deepset_competition"
+        return config
+    
+    elif preset == "aggressive":
+        # Most aggressive FP reduction
+        config = Config()
+        # Model: Larger for better calibration
+        config.model.embedding_dim = 256
+        config.model.hidden_dim = 512
+        config.model.dropout = 0.2
+        # Training: Very long training
+        config.training.num_epochs = 75
+        config.training.batch_size = 24
+        config.training.learning_rate = 5e-5
+        config.training.early_stopping_patience = 20
+        # Loss: Very conservative settings
+        config.loss.focal_alpha = 0.60  # Even lower alpha
+        config.loss.focal_gamma = 3.0   # Focus heavily on hard examples
+        config.experiment_name = "deepset_aggressive"
+        return config
+    
+    elif preset == "ultimate":
+        # Ultimate optimization: All features enabled
+        config = Config()
+        # Model: Large with auxiliary task
+        config.model.embedding_dim = 256
+        config.model.hidden_dim = 512
+        config.model.dropout = 0.18
+        # Training: Long training with moderate batch
+        config.training.num_epochs = 60
+        config.training.batch_size = 28
+        config.training.learning_rate = 6e-5
+        config.training.early_stopping_patience = 18
+        # Loss: Competition-aligned focal + auxiliary task
+        config.loss.use_focal_loss = False  # Will use competition_focal
+        config.loss.focal_alpha = 0.62
+        config.loss.focal_gamma = 2.8
+        config.loss.use_auxiliary_loss = True  # Enable empty room prediction
+        config.loss.auxiliary_weight = 0.15    # Weight for auxiliary task
+        config.experiment_name = "deepset_ultimate"
+        return config
+    
     else:
         raise ValueError(f"Unknown preset: {preset}")
 

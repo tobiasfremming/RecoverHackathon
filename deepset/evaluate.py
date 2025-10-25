@@ -47,6 +47,9 @@ class Evaluator:
             config = Config(**checkpoint["config"])
         self.config = config
         
+        # Check if model uses auxiliary task
+        use_empty_room_head = config.loss.use_auxiliary_loss if hasattr(config.loss, 'use_auxiliary_loss') else False
+        
         # Create model
         self.model = DeepSetsModel(
             num_operations=config.model.num_operations,
@@ -55,6 +58,7 @@ class Evaluator:
             hidden_dim=config.model.hidden_dim,
             dropout=config.model.dropout,
             pooling=config.model.pooling,
+            use_empty_room_head=use_empty_room_head,
         ).to(device)
         
         self.model.load_state_dict(checkpoint["model_state_dict"])
@@ -159,6 +163,12 @@ class Evaluator:
         dataloader,
         output_path: str = "submission.csv",
         threshold: Optional[float] = None,
+        use_dual_threshold: bool = False,
+        empty_room_threshold: float = 0.60,
+        empty_room_max_prob: float = 0.35,
+        suppress_problematic_ops: bool = False,
+        problematic_ops: Optional[List[int]] = None,
+        problematic_threshold: float = 0.55,
     ):
         """
         Generate submission file.
@@ -167,13 +177,34 @@ class Evaluator:
             dataloader: Test dataloader
             output_path: Path to save submission
             threshold: Classification threshold (uses checkpoint threshold if None)
+            use_dual_threshold: Use different thresholds for empty vs non-empty rooms
+            empty_room_threshold: Higher threshold for suspected empty rooms
+            empty_room_max_prob: If max(probs) < this, treat as empty room
+            suppress_problematic_ops: Apply higher threshold to operations with high FP rate
+            problematic_ops: List of operation IDs to suppress (uses default if None)
+            problematic_threshold: Threshold for problematic operations
         """
         if threshold is None:
             threshold = self.threshold
         
-        print(f"\nGenerating submission with threshold {threshold:.2f}...")
+        # Default problematic operations (high FP rate from analysis)
+        if suppress_problematic_ops and problematic_ops is None:
+            problematic_ops = [260, 108, 204, 257, 259, 154, 262, 258, 103, 112]
+        
+        if use_dual_threshold:
+            print(f"\nGenerating submission with DUAL-THRESHOLD strategy:")
+            print(f"  Empty rooms (max_prob < {empty_room_max_prob}): threshold={empty_room_threshold:.2f}")
+            print(f"  Non-empty rooms: threshold={threshold:.2f}")
+            if suppress_problematic_ops:
+                print(f"  Problematic operations {problematic_ops}: threshold={problematic_threshold:.2f}")
+        else:
+            print(f"\nGenerating submission with threshold {threshold:.2f}...")
+            if suppress_problematic_ops:
+                print(f"  Problematic operations {problematic_ops}: threshold={problematic_threshold:.2f}")
         
         all_probs = []
+        all_empty_room_probs = []
+        has_empty_room_head = self.model.use_empty_room_head if hasattr(self.model, 'use_empty_room_head') else False
         
         for batch in tqdm(dataloader, desc="Predicting"):
             # Move to device
@@ -182,7 +213,15 @@ class Evaluator:
             context_mask = batch["context_mask"].to(self.device)
             
             # Forward pass
-            logits = self.model(X, context, context_mask)
+            if has_empty_room_head:
+                logits, empty_room_logits = self.model(
+                    X, context, context_mask, return_empty_room_logits=True
+                )
+                empty_room_probs = torch.sigmoid(empty_room_logits)
+                all_empty_room_probs.append(empty_room_probs.cpu())
+            else:
+                logits = self.model(X, context, context_mask)
+            
             probs = torch.sigmoid(logits)
             
             # Store predictions
@@ -190,9 +229,54 @@ class Evaluator:
         
         # Concatenate all predictions
         all_probs = torch.cat(all_probs, dim=0)
+        if has_empty_room_head:
+            all_empty_room_probs = torch.cat(all_empty_room_probs, dim=0)
+            print(f"  Using empty room classifier (mean prob: {all_empty_room_probs.mean():.3f})")
         
-        # Convert to operation codes
-        preds_list = predictions_to_codes(all_probs, threshold=threshold)
+        # Apply dual-threshold strategy if enabled
+        if use_dual_threshold or suppress_problematic_ops or has_empty_room_head:
+            preds_list = []
+            empty_room_count = 0
+            suppressed_count = 0
+            
+            for idx, room_probs in enumerate(all_probs):
+                max_prob = room_probs.max().item()
+                
+                # Use empty room classifier if available
+                if has_empty_room_head:
+                    empty_prob = all_empty_room_probs[idx].item()
+                    is_likely_empty = empty_prob > 0.5
+                else:
+                    is_likely_empty = max_prob < empty_room_max_prob
+                
+                # Determine base threshold
+                if use_dual_threshold and is_likely_empty:
+                    room_threshold = empty_room_threshold
+                    empty_room_count += 1
+                else:
+                    room_threshold = threshold
+                
+                # Get base predictions
+                predictions_mask = room_probs >= room_threshold
+                
+                # Apply per-operation suppression if enabled
+                if suppress_problematic_ops:
+                    for op_id in problematic_ops:
+                        if predictions_mask[op_id] and room_probs[op_id] < problematic_threshold:
+                            predictions_mask[op_id] = False
+                            suppressed_count += 1
+                
+                # Get predictions for this room
+                predictions = predictions_mask.nonzero(as_tuple=True)[0].tolist()
+                preds_list.append(predictions)
+            
+            if use_dual_threshold:
+                print(f"\n  Detected {empty_room_count} suspected empty rooms ({100*empty_room_count/len(all_probs):.1f}%)")
+            if suppress_problematic_ops:
+                print(f"  Suppressed {suppressed_count} problematic operation predictions")
+        else:
+            # Convert to operation codes (standard method)
+            preds_list = predictions_to_codes(all_probs, threshold=threshold)
         
         # Create predictions dictionary for HackathonDataset.create_submission()
         # Format: {room_id: [list of operation codes]}
@@ -261,6 +345,34 @@ def main():
         help="Generate submission file",
     )
     parser.add_argument(
+        "--use-dual-threshold",
+        action="store_true",
+        help="Use dual-threshold strategy (higher threshold for suspected empty rooms)",
+    )
+    parser.add_argument(
+        "--empty-room-threshold",
+        type=float,
+        default=0.60,
+        help="Threshold for suspected empty rooms (default: 0.60)",
+    )
+    parser.add_argument(
+        "--empty-room-max-prob",
+        type=float,
+        default=0.35,
+        help="Max probability to classify as empty room (default: 0.35)",
+    )
+    parser.add_argument(
+        "--suppress-problematic-ops",
+        action="store_true",
+        help="Apply higher threshold to operations with high FP rate",
+    )
+    parser.add_argument(
+        "--problematic-threshold",
+        type=float,
+        default=0.55,
+        help="Threshold for problematic operations (default: 0.55)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="submission.csv",
@@ -307,6 +419,11 @@ def main():
             dataloaders["test"],
             output_path=args.output,
             threshold=args.threshold,
+            use_dual_threshold=args.use_dual_threshold,
+            empty_room_threshold=args.empty_room_threshold,
+            empty_room_max_prob=args.empty_room_max_prob,
+            suppress_problematic_ops=args.suppress_problematic_ops,
+            problematic_threshold=args.problematic_threshold,
         )
 
 

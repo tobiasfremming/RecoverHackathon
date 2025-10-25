@@ -9,6 +9,7 @@ import argparse
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -30,6 +31,7 @@ from deepset.utils import (
     set_seed,
     find_optimal_threshold,
 )
+from deepset.custom_loss import CompetitionAlignedLoss, CompetitionFocalLoss
 
 
 class Trainer:
@@ -55,6 +57,7 @@ class Trainer:
             hidden_dim=config.model.hidden_dim,
             dropout=config.model.dropout,
             pooling=config.model.pooling,
+            use_empty_room_head=config.loss.use_auxiliary_loss,
         ).to(device)
         
         print(f"Model created with {sum(p.numel() for p in self.model.parameters()):,} parameters")
@@ -95,12 +98,33 @@ class Trainer:
     
     def _create_loss_fn(self) -> nn.Module:
         """Create loss function based on config."""
-        if self.config.loss.loss_type == "focal":
+        # Determine loss type
+        if hasattr(self.config.loss, '_override_loss_type'):
+            loss_type = self.config.loss._override_loss_type
+        elif self.config.loss.use_focal_loss:
+            loss_type = "focal"
+        else:
+            loss_type = "bce"
+        
+        if loss_type == "competition_aligned":
+            # Custom loss that aligns with competition scoring
+            return CompetitionAlignedLoss(
+                fn_weight=2.0,  # FN penalty is 2x FP penalty in competition
+                fp_weight=1.0,
+            )
+        elif loss_type == "competition_focal":
+            # Focal loss with competition weighting
+            return CompetitionFocalLoss(
+                gamma=self.config.loss.focal_gamma,
+                fn_weight=2.0,
+                fp_weight=1.0,
+            )
+        elif loss_type == "focal":
             return FocalLoss(
                 alpha=self.config.loss.focal_alpha,
                 gamma=self.config.loss.focal_gamma,
             )
-        elif self.config.loss.loss_type == "bce":
+        elif loss_type == "bce":
             if self.config.loss.use_class_weights:
                 # Compute weights from training data
                 pos_weights = compute_class_weights(
@@ -112,7 +136,7 @@ class Trainer:
             else:
                 return nn.BCEWithLogitsLoss()
         else:
-            raise ValueError(f"Unknown loss type: {self.config.loss.loss_type}")
+            raise ValueError(f"Unknown loss type: {loss_type}")
     
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         """Train for one epoch."""
@@ -133,8 +157,25 @@ class Trainer:
             context_mask = batch["context_mask"].to(self.device)
             
             # Forward pass
-            logits = self.model(X, context, context_mask)
-            loss = self.loss_fn(logits, Y)
+            if self.config.loss.use_auxiliary_loss:
+                logits, empty_room_logits = self.model(
+                    X, context, context_mask, return_empty_room_logits=True
+                )
+                # Main loss (operation prediction)
+                main_loss = self.loss_fn(logits, Y)
+                
+                # Auxiliary loss (empty room detection)
+                # Target: 1 if room has no operations, 0 otherwise
+                is_empty = (Y.sum(dim=1) == 0).float()
+                aux_loss = F.binary_cross_entropy_with_logits(
+                    empty_room_logits, is_empty
+                )
+                
+                # Combined loss
+                loss = main_loss + self.config.loss.auxiliary_weight * aux_loss
+            else:
+                logits = self.model(X, context, context_mask)
+                loss = self.loss_fn(logits, Y)
             
             # Check for NaN
             if torch.isnan(loss):
@@ -302,8 +343,15 @@ def main():
         "--config",
         type=str,
         default="default",
-        choices=["default", "fast", "strong", "debug"],
+        choices=["default", "fast", "strong", "debug", "optimized", "competition", "aggressive", "ultimate"],
         help="Configuration preset",
+    )
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default=None,
+        choices=["focal", "bce", "competition_aligned", "competition_focal"],
+        help="Loss function type (overrides config)",
     )
     parser.add_argument(
         "--resume",
@@ -323,8 +371,17 @@ def main():
     # Load config
     config = get_config(args.config)
     
+    # Override loss type if specified
+    if args.loss:
+        config.loss._override_loss_type = args.loss
+    
     print("Configuration:")
     print(f"  Preset: {args.config}")
+    if args.loss:
+        print(f"  Loss type: {args.loss} (overridden)")
+    else:
+        print(f"  Loss type: {'focal' if config.loss.use_focal_loss else 'bce'}")
+    print(f"  Auxiliary task: {config.loss.use_auxiliary_loss}")
     print(f"  Device: {args.device}")
     print(f"  Epochs: {config.training.num_epochs}")
     print(f"  Batch size: {config.training.batch_size}")

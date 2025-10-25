@@ -33,6 +33,7 @@ class DeepSetsModel(nn.Module):
         pooling: str = "mean",
         dropout: float = 0.1,
         use_context: bool = True,
+        use_empty_room_head: bool = False,
     ):
         super().__init__()
         
@@ -42,6 +43,7 @@ class DeepSetsModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.pooling = pooling
         self.use_context = use_context
+        self.use_empty_room_head = use_empty_room_head
         
         # Total feature dimension (operations + room type)
         self.feature_dim = num_operations + num_rooms
@@ -78,6 +80,15 @@ class DeepSetsModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_operations),
         )
+        
+        # Empty room classifier (auxiliary task)
+        if use_empty_room_head:
+            self.empty_room_classifier = nn.Sequential(
+                nn.Linear(decoder_input_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim // 2, 1),
+            )
         
         # Initialize weights
         self.apply(self._init_weights)
@@ -175,6 +186,7 @@ class DeepSetsModel(nn.Module):
         X: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
+        return_empty_room_logits: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass.
@@ -183,9 +195,12 @@ class DeepSetsModel(nn.Module):
             X: (batch, feature_dim) - observed operations + room type
             context: (batch, max_rooms, feature_dim) - context rooms
             context_mask: (batch, max_rooms) - mask for valid context rooms
+            return_empty_room_logits: If True, return (operation_logits, empty_room_logits)
         
         Returns:
             logits: (batch, num_operations) - raw predictions (use sigmoid to get probabilities)
+            OR
+            (logits, empty_room_logits): if return_empty_room_logits=True
         """
         # Encode target room
         target_vec = self.encode_target(X)
@@ -200,6 +215,11 @@ class DeepSetsModel(nn.Module):
         
         # Decode to predictions
         logits = self.decoder(combined)
+        
+        # Empty room prediction (auxiliary task)
+        if self.use_empty_room_head and return_empty_room_logits:
+            empty_room_logits = self.empty_room_classifier(combined).squeeze(-1)
+            return logits, empty_room_logits
         
         return logits
 

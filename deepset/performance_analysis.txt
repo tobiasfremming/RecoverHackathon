@@ -1,0 +1,72 @@
+DEEP SETS MODEL - PERFORMANCE ANALYSIS RESULTS
+================================================================================
+
+THRESHOLD ANALYSIS
+--------------------------------------------------------------------------------
+
+Threshold: 0.30
+  F1:              0.1963
+  Precision:       0.1123
+  Recall:          0.7781
+  Mean room score: -1.7018
+  % Negative:      73.94%
+
+Threshold: 0.35
+  F1:              0.2655
+  Precision:       0.1650
+  Recall:          0.6785
+  Mean room score: -0.5512
+  % Negative:      60.35%
+
+Threshold: 0.40
+  F1:              0.3398
+  Precision:       0.2418
+  Recall:          0.5714
+  Mean room score: 0.0356
+  % Negative:      48.25%
+
+Threshold: 0.45
+  F1:              0.3981
+  Precision:       0.3456
+  Recall:          0.4695
+  Mean room score: 0.2559
+  % Negative:      41.01%
+
+Threshold: 0.50
+  F1:              0.4163
+  Precision:       0.4702
+  Recall:          0.3735
+  Mean room score: 0.2452
+  % Negative:      39.24%
+
+Threshold: 0.55
+  F1:              0.3968
+  Precision:       0.6080
+  Recall:          0.2945
+  Mean room score: 0.1504
+  % Negative:      39.84%
+
+Threshold: 0.60
+  F1:              0.3373
+  Precision:       0.7299
+  Recall:          0.2193
+  Mean room score: -0.0121
+  % Negative:      42.78%
+
+Threshold: 0.65
+  F1:              0.2696
+  Precision:       0.8188
+  Recall:          0.1614
+  Mean room score: -0.1589
+  % Negative:      46.06%
+
+Threshold: 0.70
+  F1:              0.2005
+  Precision:       0.8729
+  Recall:          0.1132
+  Mean room score: -0.2947
+  % Negative:      49.18%
+
+
+OPTIMAL THRESHOLD: 0.45
+Mean room score: 0.2559

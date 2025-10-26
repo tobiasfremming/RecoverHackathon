@@ -250,5 +250,13 @@ print("Normalized score:", score)
 - Du kan bruke datasettet i **PyTorch** med batch loading og collate.  
 - Eller du kan hente det som **Polars/Pandas** for enkel analyse.  
 - Sampling-strategi og seed gir kontroll over vanskelighetsgrad og reproduserbarhet.  
-- Evaluering skjer med en tilpasset **rom-score** som balanserer TP, FP, FN og tomme rom. 
+- Evaluering skjer med en tilpasset **rom-score** som balanserer TP, FP, FN og tomme rom.
+
+
+## Hackathon Submission
+ This submission was made by the team Golden Grip by:
+ Anna Rørnes, Elvin Kader, Olav Lorentzen and Tobias Fremming.
+
+ The presentation of case 3 regarding sustainability is on the url below:
+ https://www.canva.com/design/DAG2y9deze4/nfXSXy7mU_uAHnA5EBe99w/edit?utm_content=DA[…]m_campaign=designshare&utm_medium=link2&utm_source=sharebutton
  
